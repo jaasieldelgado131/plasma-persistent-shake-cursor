@@ -1,0 +1,216 @@
+diff --git a/autotests/integration/effects/CMakeLists.txt b/autotests/integration/effects/CMakeLists.txt
+index 6c7f6e7..d1846c2 100644
+--- a/autotests/integration/effects/CMakeLists.txt
++++ b/autotests/integration/effects/CMakeLists.txt
+@@ -5,6 +5,7 @@ integrationTest(NAME testPopupOpenCloseAnimation SRCS popup_open_close_animation
+ integrationTest(NAME testDesktopSwitchingAnimation SRCS desktop_switching_animation_test.cpp BUILTIN_EFFECTS)
+ integrationTest(NAME testMinimizeAnimation SRCS minimize_animation_test.cpp BUILTIN_EFFECTS)
+ integrationTest(NAME testMaximizeAnimation SRCS maximize_animation_test.cpp BUILTIN_EFFECTS)
++integrationTest(NAME testShakeCursor SRCS shakecursor_test.cpp BUILTIN_EFFECTS)
+ 
+ if(KWIN_BUILD_X11)
+     integrationTest(NAME testTranslucency SRCS translucency_test.cpp LIBS XCB::ICCCM BUILTIN_EFFECTS)
+diff --git a/autotests/integration/effects/shakecursor_test.cpp b/autotests/integration/effects/shakecursor_test.cpp
+new file mode 100644
+index 0000000..46ccc28
+--- /dev/null
++++ b/autotests/integration/effects/shakecursor_test.cpp
+@@ -0,0 +1,137 @@
++/*
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#include "cursor.h"
++#include "effect/effecthandler.h"
++#include "effect/effectloader.h"
++#include "kwin_wayland_test.h"
++#include "scene/item.h"
++#include "scene/workspacescene.h"
++#include "wayland_server.h"
++
++using namespace KWin;
++
++class ShakeCursorTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void initTestCase();
++    void cleanup();
++    void testKeepSize_data();
++    void testKeepSize();
++    void testEnableWhileEnlarged();
++
++private:
++    void shake();
++    qreal scale() const;
++    quint32 m_timestamp = 0;
++};
++
++void ShakeCursorTest::initTestCase()
++{
++    qputenv("XDG_DATA_DIRS", QCoreApplication::applicationDirPath().toUtf8());
++    QVERIFY(waylandServer()->init(qAppName()));
++    auto config = KSharedConfig::openConfig(QString(), KConfig::SimpleConfig);
++    KConfigGroup plugins(config, QStringLiteral("Plugins"));
++    for (const QString &name : EffectLoader().listOfKnownEffects()) {
++        plugins.writeEntry(name + QStringLiteral("Enabled"), false);
++    }
++    config->sync();
++    kwinApp()->setConfig(config);
++    kwinApp()->start();
++    Test::setOutputConfig({Rect(0, 0, 1280, 1024)});
++}
++
++void ShakeCursorTest::cleanup()
++{
++    effects->unloadAllEffects();
++    QVERIFY(!Cursors::self()->isCursorHidden());
++}
++
++void ShakeCursorTest::shake()
++{
++    for (int i = 0; i < 12; ++i) {
++        Test::pointerMotion(QPointF(i % 2 ? 600 : 400, 400), m_timestamp += 20);
++    }
++}
++
++qreal ShakeCursorTest::scale() const
++{
++    for (Item *item : effects->scene()->overlayItem()->childItems()) {
++        if (qstrcmp(item->metaObject()->className(), "KWin::ShakeCursorItem") == 0) {
++            return item->transform().m11();
++        }
++    }
++    return 1.0;
++}
++
++void ShakeCursorTest::testKeepSize_data()
++{
++    QTest::addColumn<int>("keepSize");
++    QTest::newRow("default-still-shrinks") << -1;
++    QTest::newRow("disabled-still-shrinks") << 0;
++    QTest::newRow("enabled-retains-and-can-reset") << 1;
++}
++
++void ShakeCursorTest::testKeepSize()
++{
++    QFETCH(int, keepSize);
++    KConfigGroup config(kwinApp()->config(), QStringLiteral("Effect-shakecursor"));
++    if (keepSize == -1) {
++        config.deleteEntry("KeepSize");
++    } else {
++        config.writeEntry("KeepSize", keepSize == 1);
++    }
++    config.sync();
++    QVERIFY(effects->loadEffect(QStringLiteral("shakecursor")));
++    Effect *effect = effects->findEffect(QStringLiteral("shakecursor"));
++    QVERIFY(effect);
++    shake();
++    QTRY_VERIFY(effect->isActive());
++    QTest::qWait(350);
++    const qreal firstScale = scale();
++    QVERIFY(firstScale > 1.0);
++
++    QTest::qWait(2500);
++    if (keepSize != 1) {
++        QVERIFY(!effect->isActive());
++        QCOMPARE(scale(), 1.0);
++        return;
++    }
++    QVERIFY(effect->isActive());
++    QCOMPARE(scale(), firstScale);
++    shake();
++    QTest::qWait(350);
++    QVERIFY(scale() > firstScale);
++    config.writeEntry("KeepSize", false);
++    config.sync();
++    effect->reconfigure(Effect::ReconfigureAll);
++    QTRY_VERIFY(!effect->isActive());
++    QVERIFY(!Cursors::self()->isCursorHidden());
++}
++
++void ShakeCursorTest::testEnableWhileEnlarged()
++{
++    KConfigGroup config(kwinApp()->config(), QStringLiteral("Effect-shakecursor"));
++    config.writeEntry("KeepSize", false);
++    config.sync();
++    QVERIFY(effects->loadEffect(QStringLiteral("shakecursor")));
++    Effect *effect = effects->findEffect(QStringLiteral("shakecursor"));
++    QVERIFY(effect);
++    shake();
++    QTest::qWait(350);
++    const qreal enlargedScale = scale();
++    QVERIFY(enlargedScale > 1.0);
++    config.writeEntry("KeepSize", true);
++    config.sync();
++    effect->reconfigure(Effect::ReconfigureAll);
++    QTest::qWait(2500);
++    QVERIFY(effect->isActive());
++    QCOMPARE(scale(), enlargedScale);
++    // cleanup() unloads the enlarged effect and verifies that the normal cursor returns.
++}
++
++WAYLANDTEST_MAIN(ShakeCursorTest)
++#include "shakecursor_test.moc"
+diff --git a/src/plugins/shakecursor/shakecursor.cpp b/src/plugins/shakecursor/shakecursor.cpp
+index fd0dd22..f1564f8 100644
+--- a/src/plugins/shakecursor/shakecursor.cpp
++++ b/src/plugins/shakecursor/shakecursor.cpp
+@@ -75,6 +75,18 @@ void ShakeCursorEffect::reconfigure(ReconfigureFlags flags)
+ 
+     m_shakeDetector.setInterval(ShakeCursorConfig::timeInterval());
+     m_shakeDetector.setSensitivity(ShakeCursorConfig::sensitivity());
++
++    const bool keepSize = ShakeCursorConfig::keepSize();
++    if (m_keepSize != keepSize) {
++        m_keepSize = keepSize;
++        m_deflateTimer.stop();
++        if (!m_keepSize) {
++            deflate();
++        } else if (m_targetMagnification < m_currentMagnification) {
++            m_scaleAnimation.stop();
++            m_targetMagnification = m_currentMagnification;
++        }
++    }
+ }
+ 
+ void ShakeCursorEffect::inflate()
+@@ -122,7 +134,9 @@ void ShakeCursorEffect::pointerMotion(PointerMotionEvent *event)
+ 
+     if (m_shakeDetector.update(event)) {
+         inflate();
+-        m_deflateTimer.start(2000);
++        if (!m_keepSize) {
++            m_deflateTimer.start(2000);
++        }
+     }
+ }
+ 
+diff --git a/src/plugins/shakecursor/shakecursor.h b/src/plugins/shakecursor/shakecursor.h
+index 994c590..7bb2077 100644
+--- a/src/plugins/shakecursor/shakecursor.h
++++ b/src/plugins/shakecursor/shakecursor.h
+@@ -66,6 +66,7 @@ private:
+     CursorTheme m_cursorTheme;
+     qreal m_targetMagnification = 1.0;
+     qreal m_currentMagnification = 1.0;
++    bool m_keepSize = false;
+ };
+ 
+ } // namespace KWin
+diff --git a/src/plugins/shakecursor/shakecursorconfig.kcfg b/src/plugins/shakecursor/shakecursorconfig.kcfg
+index fb35524..fe71a8f 100644
+--- a/src/plugins/shakecursor/shakecursorconfig.kcfg
++++ b/src/plugins/shakecursor/shakecursorconfig.kcfg
+@@ -5,6 +5,10 @@
+                           http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
+     <kcfgfile arg="true"/>
+     <group name="Effect-shakecursor">
++        <entry name="KeepSize" type="Bool">
++            <label>Keep the enlarged pointer size after shaking</label>
++            <default>false</default>
++        </entry>
+         <entry name="TimeInterval" type="UInt">
+             <default>1000</default>
+         </entry>

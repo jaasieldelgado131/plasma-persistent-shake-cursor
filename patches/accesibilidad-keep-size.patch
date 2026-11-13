@@ -1,0 +1,76 @@
+diff --git a/kcms/access/kcmaccess.cpp b/kcms/access/kcmaccess.cpp
+index e304d3f..02928d0 100644
+--- a/kcms/access/kcmaccess.cpp
++++ b/kcms/access/kcmaccess.cpp
+@@ -280,6 +280,7 @@ void KAccessConfig::save()
+ {
+     const bool shakeCursorSaveNeeded = m_data->shakeCursorSettings()->findItem(QStringLiteral("ShakeCursor"))->isSaveNeeded();
+     const bool shakeCursorMagnificationSaveNeeded = m_data->shakeCursorSettings()->findItem(QStringLiteral("ShakeCursorMagnification"))->isSaveNeeded();
++    const bool shakeCursorKeepSizeSaveNeeded = m_data->shakeCursorSettings()->findItem(QStringLiteral("ShakeCursorKeepSize"))->isSaveNeeded();
+ 
+     const bool dwellClickerSaveNeeded = m_data->dwellClickerSettings()->findItem(QStringLiteral("DwellClicker"))->isSaveNeeded();
+     const bool dwellClickerDelayTimeSaveNeeded = m_data->dwellClickerSettings()->findItem(QStringLiteral("DwellClickerDelayTime"))->isSaveNeeded();
+@@ -322,7 +323,7 @@ void KAccessConfig::save()
+         reloadMessage.setArguments({QStringLiteral("shakecursor")});
+         QDBusConnection::sessionBus().call(reloadMessage);
+     }
+-    if (shakeCursorMagnificationSaveNeeded) {
++    if (shakeCursorMagnificationSaveNeeded || shakeCursorKeepSizeSaveNeeded) {
+         QDBusMessage reconfigureMessage = QDBusMessage::createMethodCall(QStringLiteral("org.kde.KWin"),
+                                                                          QStringLiteral("/Effects"),
+                                                                          QStringLiteral("org.kde.kwin.Effects"),
+diff --git a/kcms/access/kcmaccessibilityshakecursor.kcfg b/kcms/access/kcmaccessibilityshakecursor.kcfg
+index 61185ab..5f4358c 100644
+--- a/kcms/access/kcmaccessibilityshakecursor.kcfg
++++ b/kcms/access/kcmaccessibilityshakecursor.kcfg
+@@ -11,6 +11,10 @@
+     </entry>
+   </group>
+   <group name="Effect-shakecursor">
++    <entry name="ShakeCursorKeepSize" key="KeepSize" type="Bool">
++      <label>Keep the enlarged pointer size after shaking</label>
++      <default>false</default>
++    </entry>
+     <entry name="ShakeCursorMagnification" key="Magnification" type="Double">
+       <label>Magnification</label>
+       <default>3</default>
+diff --git a/kcms/access/ui/ShakeCursor.qml b/kcms/access/ui/ShakeCursor.qml
+index 7d094f8..faab6ce 100644
+--- a/kcms/access/ui/ShakeCursor.qml
++++ b/kcms/access/ui/ShakeCursor.qml
+@@ -27,6 +27,21 @@ Kirigami.Form {
+             }
+         }
+ 
++        Kirigami.FormEntry {
++            contentItem: QQC2.CheckBox {
++                text: i18nc("@option:check", "Keep the enlarged pointer size after shaking")
++
++                KCMUtils.SettingStateBinding {
++                    configObject: kcm.shakeCursorSettings
++                    settingName: "ShakeCursorKeepSize"
++                    extraEnabledConditions: kcm.shakeCursorSettings.shakeCursor
++                }
++
++                checked: kcm.shakeCursorSettings.shakeCursorKeepSize
++                onToggled: kcm.shakeCursorSettings.shakeCursorKeepSize = checked
++            }
++        }
++
+         Kirigami.FormEntry {
+             title: i18nc("@label Pointer magnification level", "Magnification:")
+             contentItem: ColumnLayout {
+diff --git a/po/es/kcm_access.po b/po/es/kcm_access.po
+index fad5001..57cccfa 100644
+--- a/po/es/kcm_access.po
++++ b/po/es/kcm_access.po
+@@ -1158,3 +1158,9 @@ msgctxt "@label Hint for scroll gestures"
+ msgid "Scroll while modifier keys are pressed to zoom"
+ msgstr ""
+ "Desplazar para ampliar mientras están pulsadas las teclas modificadoras"
++
++#: kcms/access/ui/ShakeCursor.qml
++#, kde-format
++msgctxt "@option:check"
++msgid "Keep the enlarged pointer size after shaking"
++msgstr "Conservar el tamaño ampliado al dejar de agitar"

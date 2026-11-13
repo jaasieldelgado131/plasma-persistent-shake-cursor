@@ -1,0 +1,13 @@
+/work/
+/build/
+/sources/
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
+*.tar.gz
+*.tar.xz
+__pycache__/
+estado-instalacion.txt
+.env
+.env.*
+*.pem
+*.key
